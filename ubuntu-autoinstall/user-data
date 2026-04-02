@@ -1,0 +1,123 @@
+#cloud-config
+autoinstall:
+  version: 1
+
+  apt:
+    geoip: false
+    preserve_sources_list: false
+    primary:
+      - arches: [amd64]
+        uri: https://repo.huaweicloud.com/ubuntu
+      - arches: [default]
+        uri: http://ports.ubuntu.com/ubuntu-ports
+
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+    variant: ''
+
+  identity:
+    hostname: ubuntu-server
+    username: ubuntu
+    # 用 openssl passwd -6 "yourpassword" 生成哈希
+    password: "$6$j/6FKaGvOBawk54n$18J/U3APCJw5f/QiKGS/WPiCIVVbSz5tQ5gx8EODUfypNR.zjzYKLRtjfDOgLpd/W43zuHVioqELQOmEa34og1"
+
+  ssh:
+    install-server: true
+    allow-pw: true
+    authorized-keys: []
+
+  storage:
+    config:
+      # 磁盘：自动选最大盘；固定磁盘改为 path: /dev/sda
+      - type: disk
+        id: disk0
+        match:
+          largest: true
+        ptable: gpt
+        wipe: superblock-recursive
+        preserve: false
+        grub_device: false
+
+      # EFI 512M
+      - type: partition
+        id: part-efi
+        device: disk0
+        size: 512M
+        flag: esp
+        grub_device: true
+        preserve: false
+
+      # /boot 4G
+      - type: partition
+        id: part-boot
+        device: disk0
+        size: 4G
+        preserve: false
+
+      # / 剩余全部
+      - type: partition
+        id: part-root
+        device: disk0
+        size: -1
+        preserve: false
+
+      - {type: format, id: fmt-efi,  volume: part-efi,  fstype: fat32}
+      - {type: format, id: fmt-boot, volume: part-boot, fstype: ext4}
+      - {type: format, id: fmt-root, volume: part-root, fstype: ext4}
+
+      - {type: mount, id: mnt-efi,  device: fmt-efi,  path: /boot/efi}
+      - {type: mount, id: mnt-boot, device: fmt-boot, path: /boot}
+      - {type: mount, id: mnt-root, device: fmt-root, path: /}
+
+  network:
+    version: 2
+    ethernets:
+      any-en:
+        match: {name: "en*"}
+        dhcp4: true
+        optional: true
+      any-eth:
+        match: {name: "eth*"}
+        dhcp4: true
+        optional: true
+
+  packages:
+    - openssh-server
+    - curl
+    - wget
+    - vim
+    - net-tools
+    - htop
+
+  user-data:
+    timezone: Asia/Shanghai
+    package_update: false
+    package_upgrade: false
+
+  late-commands:
+    # 复制附加内容到目标系统
+    - mkdir -p /target/opt/extras
+    - cp -r /cdrom/extras/scripts /target/opt/extras/
+    - cp -r /cdrom/extras/drivers /target/opt/extras/
+    - cp -r /cdrom/extras/keys    /target/opt/extras/
+    - chmod +x /target/opt/extras/scripts/*.sh
+
+    # 配置离线 APT 仓库（GPG 签名）
+    - test -d /cdrom/extras/repo/pool && cp -r /cdrom/extras/repo /target/opt/extras/
+    - test -d /cdrom/extras/repo/pool && echo 'deb [signed-by=/etc/apt/trusted.gpg.d/repo-signing.gpg] file:///opt/extras/repo ./' > /target/etc/apt/sources.list.d/local-offline.list
+    - test -f /cdrom/extras/keys/repo-signing.gpg && cp /cdrom/extras/keys/repo-signing.gpg /target/etc/apt/trusted.gpg.d/repo-signing.gpg
+
+    # 写入 SSH 公钥
+    - mkdir -p /target/home/ubuntu/.ssh
+    - cp /cdrom/extras/keys/authorized_keys /target/home/ubuntu/.ssh/authorized_keys
+    - chown -R 1000:1000 /target/home/ubuntu/.ssh
+    - chmod 700 /target/home/ubuntu/.ssh
+    - chmod 600 /target/home/ubuntu/.ssh/authorized_keys
+
+    # 执行安装后主脚本
+    - curtin in-target --target=/target -- bash /opt/extras/scripts/post-install.sh
+
+    # sudo 免密
+    - echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/ubuntu
+    - chmod 440 /target/etc/sudoers.d/ubuntu
