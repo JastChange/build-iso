@@ -63,11 +63,18 @@ step "安装预装软件包"
 PREINSTALL_PACKAGES=(
   # 基础工具
   openssh-server curl wget vim htop net-tools
-  # 编译工具链
+  # 编译工具链（驱动编译必需）
   build-essential gcc g++ make cmake
   dkms linux-headers-generic
-  # Python
-  python3 python3-dev
+  # Python（Mellanox OFED 必需）
+  python3 python3-dev python3-distutils
+  # Mellanox OFED 依赖
+  ethtool lsof pciutils numactl libnuma-dev
+  tk tcl libglib2.0-0 libfuse2
+  libibverbs-dev librdmacm-dev rdma-core
+  # NVIDIA 驱动依赖
+  pkg-config libglvnd-dev
+  kmod initramfs-tools
 )
 
 chroot "${SQUASHFS_ROOT}" bash -c "
