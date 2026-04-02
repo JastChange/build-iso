@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # ════════════════ 配置区 ════════════════
-UBUNTU_ISO_PATH="/opt/ubuntu-22.04-live-server-amd64.iso"
+UBUNTU_ISO_PATH="/opt/ubuntu-22.04.5-live-server-amd64.iso"
 BUILD_DATE="$(date '+%Y%m%d')"
 OUTPUT_ISO="/home/isobuild/ubuntu-22.04-autoinstall-${BUILD_DATE}.iso"
 WORK_DIR="/tmp/iso-build-work"

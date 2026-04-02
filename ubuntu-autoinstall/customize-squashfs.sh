@@ -5,9 +5,28 @@ set -euo pipefail
 
 WORK_DIR="${1:?用法: $0 <ISO工作目录>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SQUASHFS="${WORK_DIR}/casper/filesystem.squashfs"
+CASPER_DIR="${WORK_DIR}/casper"
 SQUASHFS_ROOT="/tmp/squashfs-root"
 LOG="/tmp/customize-squashfs.log"
+
+# Ubuntu 22.04.5 使用分层 squashfs，定制完整服务器层
+SQUASHFS_BASE="${CASPER_DIR}/ubuntu-server-minimal.squashfs"
+SQUASHFS_SERVER="${CASPER_DIR}/ubuntu-server-minimal.ubuntu-server.squashfs"
+# 兼容旧版 ISO（单文件 filesystem.squashfs）
+SQUASHFS_LEGACY="${CASPER_DIR}/filesystem.squashfs"
+
+# 自动检测 squashfs 路径
+if [[ -f "${SQUASHFS_SERVER}" ]]; then
+  SQUASHFS="${SQUASHFS_SERVER}"
+  SQUASHFS_IS_LAYERED=true
+elif [[ -f "${SQUASHFS_LEGACY}" ]]; then
+  SQUASHFS="${SQUASHFS_LEGACY}"
+  SQUASHFS_IS_LAYERED=false
+else
+  echo "casper/ 内容：" >&2
+  ls -la "${CASPER_DIR}/" >&2
+  error "未找到可用的 squashfs 文件"
+fi
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
@@ -18,7 +37,6 @@ error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 
 [[ $EUID -ne 0 ]] && error "需要 root 权限"
-[[ -f "${SQUASHFS}" ]] || error "squashfs 不存在：${SQUASHFS}"
 command -v unsquashfs &>/dev/null || error "缺少 squashfs-tools"
 command -v mksquashfs &>/dev/null || error "缺少 squashfs-tools"
 
@@ -44,7 +62,17 @@ fi
 # ──── 第 1 步：解包 squashfs ────
 step "解包 squashfs"
 rm -rf "${SQUASHFS_ROOT}"
-unsquashfs -d "${SQUASHFS_ROOT}" "${SQUASHFS}" 2>&1 | tail -3
+
+if [[ "${SQUASHFS_IS_LAYERED}" == true ]]; then
+  info "分层模式：先解包 base，再叠加 server 层"
+  unsquashfs -d "${SQUASHFS_ROOT}" "${SQUASHFS_BASE}" 2>&1 | tail -3
+  ok "base 层解包完成"
+  unsquashfs -f -d "${SQUASHFS_ROOT}" "${SQUASHFS_SERVER}" 2>&1 | tail -3
+  ok "server 层叠加完成"
+else
+  info "单文件模式"
+  unsquashfs -d "${SQUASHFS_ROOT}" "${SQUASHFS}" 2>&1 | tail -3
+fi
 ok "解包完成（$(du -sh "${SQUASHFS_ROOT}" | cut -f1)）"
 
 # ──── 第 2 步：准备 chroot 环境 ────
@@ -210,15 +238,51 @@ step "重新打包 squashfs"
 cleanup_chroot
 trap - EXIT  # 清除 trap，因为已手动调用
 
-rm -f "${SQUASHFS}"
-mksquashfs "${SQUASHFS_ROOT}" "${SQUASHFS}" \
-  -comp xz -b 1M -Xdict-size 100% \
-  -no-progress 2>&1 | tail -3
-ok "squashfs 重新打包完成（$(du -sh "${SQUASHFS}" | cut -f1)）"
+if [[ "${SQUASHFS_IS_LAYERED}" == true ]]; then
+  # 分层模式：合并为单个 squashfs，替换原有分层文件
+  info "合并 base + server 层为单个 squashfs"
 
-# 更新 filesystem.size
-du -sx --block-size=1 "${SQUASHFS_ROOT}" | cut -f1 > "${WORK_DIR}/casper/filesystem.size"
-ok "filesystem.size 已更新"
+  # 删除旧的分层文件及签名
+  rm -f "${SQUASHFS_BASE}" "${SQUASHFS_BASE}.gpg"
+  rm -f "${SQUASHFS_SERVER}" "${SQUASHFS_SERVER}.gpg"
+
+  # 打包为 server 层文件名（installer 根据 install-sources.yaml 读取）
+  mksquashfs "${SQUASHFS_ROOT}" "${SQUASHFS_SERVER}" \
+    -comp xz -b 1M -Xdict-size 100% \
+    -no-progress 2>&1 | tail -3
+  ok "squashfs 打包完成（$(du -sh "${SQUASHFS_SERVER}" | cut -f1)）"
+
+  # 更新 install-sources.yaml，移除 base 层引用（合并后只需一个）
+  INSTALL_SOURCES="${CASPER_DIR}/install-sources.yaml"
+  if [[ -f "${INSTALL_SOURCES}" ]]; then
+    info "更新 install-sources.yaml（合并为单层）"
+    cp "${INSTALL_SOURCES}" "${INSTALL_SOURCES}.orig"
+    # 只保留 server 层，path 指向合并后的文件
+    cat > "${INSTALL_SOURCES}" << 'YAMLEOF'
+- uri: cp:///casper/ubuntu-server-minimal.ubuntu-server.squashfs
+  paths:
+    - /
+YAMLEOF
+    ok "install-sources.yaml 已更新"
+  fi
+
+  # 删除所有残留 .gpg 签名文件（修改后签名已失效）
+  rm -f "${CASPER_DIR}"/*.squashfs.gpg
+  warn "已删除旧 squashfs 签名（.gpg）——修改后签名已失效"
+
+  # 更新 size 文件
+  du -sx --block-size=1 "${SQUASHFS_ROOT}" | cut -f1 > "${CASPER_DIR}/ubuntu-server-minimal.ubuntu-server.size"
+  ok "size 文件已更新"
+else
+  # 单文件模式
+  rm -f "${SQUASHFS}"
+  mksquashfs "${SQUASHFS_ROOT}" "${SQUASHFS}" \
+    -comp xz -b 1M -Xdict-size 100% \
+    -no-progress 2>&1 | tail -3
+  ok "squashfs 重新打包完成（$(du -sh "${SQUASHFS}" | cut -f1)）"
+  du -sx --block-size=1 "${SQUASHFS_ROOT}" | cut -f1 > "${WORK_DIR}/casper/filesystem.size"
+  ok "filesystem.size 已更新"
+fi
 
 # 清理解包目录
 rm -rf "${SQUASHFS_ROOT}"
