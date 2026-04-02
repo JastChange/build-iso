@@ -24,7 +24,7 @@ ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 # ──── 第 1 步：依赖检查 ────
 step "依赖检查"
 MISSING=()
-for cmd in xorriso python3 unsquashfs mksquashfs dpkg-scanpackages gpg; do
+for cmd in xorriso python3 unsquashfs mksquashfs; do
   if command -v "$cmd" &>/dev/null; then
     ok "$cmd"
   else
@@ -42,8 +42,6 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
       curl)              PKGS+=("curl") ;;
       python3)           PKGS+=("python3") ;;
       unsquashfs|mksquashfs) PKGS+=("squashfs-tools") ;;
-      dpkg-scanpackages) PKGS+=("dpkg-dev") ;;
-      gpg)               PKGS+=("gnupg") ;;
       *)                 PKGS+=("$cmd") ;;
     esac
   done
@@ -104,14 +102,13 @@ cp "${SCRIPT_DIR}/meta-data" "${WORK_DIR}/autoinstall/meta-data"
 ok "autoinstall/ 注入完成"
 
 # ──── 第 6 步：注入 extras ────
-step "注入 extras（脚本 / 驱动 / 密钥 / 离线仓库）"
+step "注入 extras（脚本 / 驱动 / 密钥）"
 cp -r "${SCRIPT_DIR}/extras" "${WORK_DIR}/extras"
 chmod +x "${WORK_DIR}/extras/scripts/"*.sh 2>/dev/null || true
 
 MLNX=$(ls "${WORK_DIR}/extras/drivers/"MLNX_OFED*.tgz 2>/dev/null | head -1 || true)
 NVCR=$(ls "${WORK_DIR}/extras/drivers/"NVIDIA-Linux*.run 2>/dev/null | head -1 || true)
 KEYS="${WORK_DIR}/extras/keys/authorized_keys"
-REPO="${WORK_DIR}/extras/repo/Packages.gz"
 
 [[ -n "${MLNX}" ]] && ok "Mellanox OFED ：$(basename "${MLNX}")" \
                     || warn "未发现 Mellanox OFED（可选，构建继续）"
@@ -122,17 +119,6 @@ if [[ -s "${KEYS}" ]]; then
   ok "SSH 公钥     ：${KEY_COUNT} 条"
 else
   warn "authorized_keys 为空（安装后无密钥登录）"
-fi
-if [[ -f "${REPO}" ]]; then
-  REPO_PKG_COUNT=$(zcat "${REPO}" | grep -c "^Package:" || echo 0)
-  ok "离线仓库     ：${REPO_PKG_COUNT} 个包"
-else
-  warn "未发现离线仓库（可选，构建继续）"
-fi
-if [[ -f "${WORK_DIR}/extras/keys/repo-signing.gpg" ]]; then
-  ok "GPG 签名密钥 ：已嵌入"
-else
-  warn "未发现 GPG 签名密钥"
 fi
 
 # ──── 第 7 步：修改 GRUB ────

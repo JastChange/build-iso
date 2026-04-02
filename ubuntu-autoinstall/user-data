@@ -1,9 +1,8 @@
 #cloud-config
 autoinstall:
   version: 1
-
   apt:
-    geoip: false
+    geoip: true
     preserve_sources_list: false
     primary:
       - arches: [amd64]
@@ -11,113 +10,99 @@ autoinstall:
       - arches: [default]
         uri: http://ports.ubuntu.com/ubuntu-ports
 
-  locale: en_US.UTF-8
-  keyboard:
-    layout: us
-    variant: ''
-
   identity:
     hostname: ubuntu-server
     username: ubuntu
-    # 用 openssl passwd -6 "yourpassword" 生成哈希
     password: "$6$j/6FKaGvOBawk54n$18J/U3APCJw5f/QiKGS/WPiCIVVbSz5tQ5gx8EODUfypNR.zjzYKLRtjfDOgLpd/W43zuHVioqELQOmEa34og1"
+
+  storage:
+    config:
+      - ptable: gpt
+        path: /dev/sda
+        wipe: superblock
+        preserve: false
+        grub_device: true
+        type: disk
+        id: disk-sda
+
+      # EFI 鍒嗗尯锛�512M锛夛紝鐢ㄤ簬 UEFI
+      - device: disk-sda
+        size: 536870912    # 512M
+        flag: esp
+        number: 1
+        preserve: false
+        grub_device: true
+        type: partition
+        id: partition-efi
+
+      - fstype: fat32
+        volume: partition-efi
+        preserve: false
+        type: format
+        id: format-efi
+
+      # /boot 鍒嗗尯锛�4G锛夛紝鐢ㄤ簬鍐呮牳
+      - device: disk-sda
+        size: 4294967296   # 4G
+        flag: ''
+        number: 2
+        preserve: false
+        grub_device: false
+        type: partition
+        id: partition-boot
+
+      - fstype: ext4
+        volume: partition-boot
+        preserve: false
+        type: format
+        id: format-boot
+
+      # 鏍瑰垎鍖猴紙鍓╀綑绌洪棿锛宔xt4锛�
+      - device: disk-sda
+        size: -1
+        flag: ''
+        number: 3
+        preserve: false
+        grub_device: false
+        type: partition
+        id: partition-root
+
+      - fstype: ext4
+        volume: partition-root
+        preserve: false
+        type: format
+        id: format-root
+
+      # 鎸傝浇鐐�
+      - path: /boot/efi
+        device: format-efi
+        type: mount
+        id: mount-efi
+
+      - path: /boot
+        device: format-boot
+        type: mount
+        id: mount-boot
+
+      - path: /
+        device: format-root
+        type: mount
+        id: mount-root
 
   ssh:
     install-server: true
     allow-pw: true
-    authorized-keys: []
-
-  storage:
-    config:
-      # 磁盘：自动选最大盘；固定磁盘改为 path: /dev/sda
-      - type: disk
-        id: disk0
-        match:
-          largest: true
-        ptable: gpt
-        wipe: superblock-recursive
-        preserve: false
-        grub_device: false
-
-      # EFI 512M
-      - type: partition
-        id: part-efi
-        device: disk0
-        size: 512M
-        flag: esp
-        grub_device: true
-        preserve: false
-
-      # /boot 4G
-      - type: partition
-        id: part-boot
-        device: disk0
-        size: 4G
-        preserve: false
-
-      # / 剩余全部
-      - type: partition
-        id: part-root
-        device: disk0
-        size: -1
-        preserve: false
-
-      - {type: format, id: fmt-efi,  volume: part-efi,  fstype: fat32}
-      - {type: format, id: fmt-boot, volume: part-boot, fstype: ext4}
-      - {type: format, id: fmt-root, volume: part-root, fstype: ext4}
-
-      - {type: mount, id: mnt-efi,  device: fmt-efi,  path: /boot/efi}
-      - {type: mount, id: mnt-boot, device: fmt-boot, path: /boot}
-      - {type: mount, id: mnt-root, device: fmt-root, path: /}
-
-  network:
-    version: 2
-    ethernets:
-      any-en:
-        match: {name: "en*"}
-        dhcp4: true
-        optional: true
-      any-eth:
-        match: {name: "eth*"}
-        dhcp4: true
-        optional: true
-
-  packages:
-    - openssh-server
-    - curl
-    - wget
-    - vim
-    - net-tools
-    - htop
-
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+    variant: ''
   user-data:
     timezone: Asia/Shanghai
     package_update: false
     package_upgrade: false
-
-  late-commands:
-    # 复制附加内容到目标系统
-    - mkdir -p /target/opt/extras
-    - cp -r /cdrom/extras/scripts /target/opt/extras/
-    - cp -r /cdrom/extras/drivers /target/opt/extras/
-    - cp -r /cdrom/extras/keys    /target/opt/extras/
-    - chmod +x /target/opt/extras/scripts/*.sh
-
-    # 配置离线 APT 仓库（GPG 签名）
-    - test -d /cdrom/extras/repo/pool && cp -r /cdrom/extras/repo /target/opt/extras/
-    - test -d /cdrom/extras/repo/pool && echo 'deb [signed-by=/etc/apt/trusted.gpg.d/repo-signing.gpg] file:///opt/extras/repo ./' > /target/etc/apt/sources.list.d/local-offline.list
-    - test -f /cdrom/extras/keys/repo-signing.gpg && cp /cdrom/extras/keys/repo-signing.gpg /target/etc/apt/trusted.gpg.d/repo-signing.gpg
-
-    # 写入 SSH 公钥
-    - mkdir -p /target/home/ubuntu/.ssh
-    - cp /cdrom/extras/keys/authorized_keys /target/home/ubuntu/.ssh/authorized_keys
-    - chown -R 1000:1000 /target/home/ubuntu/.ssh
-    - chmod 700 /target/home/ubuntu/.ssh
-    - chmod 600 /target/home/ubuntu/.ssh/authorized_keys
-
-    # 执行安装后主脚本
-    - curtin in-target --target=/target -- bash /opt/extras/scripts/post-install.sh
-
-    # sudo 免密
-    - echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/ubuntu
-    - chmod 440 /target/etc/sudoers.d/ubuntu
+    write_files:
+      - path: /etc/sudoers.d/nopasswd
+        owner: root:root
+        permissions: '0440'
+        content: |
+          %sudo ALL=(ALL) NOPASSWD:ALL

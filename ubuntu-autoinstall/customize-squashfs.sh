@@ -48,25 +48,26 @@ mount --bind /run     "${SQUASHFS_ROOT}/run"
 cp /etc/resolv.conf "${SQUASHFS_ROOT}/etc/resolv.conf" 2>/dev/null || true
 ok "chroot 环境就绪"
 
-# ──── 第 3 步：导入 GPG 公钥 ────
-step "导入 GPG 公钥"
+# ──── 第 3 步：导入 GPG 公钥（自定义仓库时启用） ────
 if [[ -f "${SCRIPT_DIR}/extras/keys/repo-signing.gpg" ]]; then
+  step "导入 GPG 公钥"
   cp "${SCRIPT_DIR}/extras/keys/repo-signing.gpg" \
      "${SQUASHFS_ROOT}/etc/apt/trusted.gpg.d/repo-signing.gpg"
   ok "GPG 公钥已导入"
-else
-  warn "未发现 repo-signing.gpg，跳过"
 fi
 
 # ──── 第 4 步：chroot 安装预装包 ────
 step "安装预装软件包"
 
-# 预装包列表（可根据需要修改）
+# 预装包列表（所有需要的软件都在这里，user-data 中不再声明 packages）
 PREINSTALL_PACKAGES=(
+  # 基础工具
+  openssh-server curl wget vim htop net-tools
+  # 编译工具链
   build-essential gcc g++ make cmake
   dkms linux-headers-generic
+  # Python
   python3 python3-dev
-  curl wget vim htop net-tools
 )
 
 chroot "${SQUASHFS_ROOT}" bash -c "
