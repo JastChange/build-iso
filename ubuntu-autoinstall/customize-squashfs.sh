@@ -65,14 +65,17 @@ rm -rf "${SQUASHFS_ROOT}"
 
 if [[ "${SQUASHFS_IS_LAYERED}" == true ]]; then
   info "分层模式：先解包 base，再叠加 server 层"
-  unsquashfs -d "${SQUASHFS_ROOT}" "${SQUASHFS_BASE}" 2>&1 | tail -3
+  unsquashfs -d "${SQUASHFS_ROOT}" "${SQUASHFS_BASE}" 2>&1 | tail -5 || true
   ok "base 层解包完成"
-  unsquashfs -f -d "${SQUASHFS_ROOT}" "${SQUASHFS_SERVER}" 2>&1 | tail -3
+  # -f 叠加覆盖文件时 unsquashfs 可能返回非零，属于正常行为
+  unsquashfs -f -d "${SQUASHFS_ROOT}" "${SQUASHFS_SERVER}" 2>&1 | tail -5 || true
   ok "server 层叠加完成"
 else
   info "单文件模式"
-  unsquashfs -d "${SQUASHFS_ROOT}" "${SQUASHFS}" 2>&1 | tail -3
+  unsquashfs -d "${SQUASHFS_ROOT}" "${SQUASHFS}" 2>&1 | tail -5 || true
 fi
+# 验证解包结果
+[[ -d "${SQUASHFS_ROOT}/usr" ]] || error "squashfs 解包失败：${SQUASHFS_ROOT}/usr 不存在"
 ok "解包完成（$(du -sh "${SQUASHFS_ROOT}" | cut -f1)）"
 
 # ──── 第 2 步：准备 chroot 环境 ────
