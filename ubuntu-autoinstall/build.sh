@@ -94,6 +94,21 @@ else
   warn "未发现 customize-squashfs.sh，使用官方原版 squashfs"
 fi
 
+# 安全检查：验证 casper/ 中关键 squashfs 文件完整
+step "验证 casper/ squashfs 完整性"
+info "casper/ 中 squashfs 文件："
+ls -lhS "${WORK_DIR}/casper/"*.squashfs 2>/dev/null | awk '{printf "  %s (%s)\n", $NF, $5}'
+for sqfs in \
+  "${WORK_DIR}/casper/ubuntu-server-minimal.squashfs" \
+  "${WORK_DIR}/casper/ubuntu-server-minimal.ubuntu-server.squashfs" \
+  "${WORK_DIR}/casper/ubuntu-server-minimal.ubuntu-server.installer.generic.squashfs"; do
+  if [[ -f "${sqfs}" ]]; then
+    ok "$(basename "${sqfs}") 存在"
+  else
+    error "$(basename "${sqfs}") 缺失！initrd 需要此文件"
+  fi
+done
+
 # ──── 第 5 步：注入 autoinstall 配置 ────
 step "注入 autoinstall 配置"
 mkdir -p "${WORK_DIR}/autoinstall"

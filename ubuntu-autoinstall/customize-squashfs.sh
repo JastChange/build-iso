@@ -278,4 +278,11 @@ fi
 
 # 清理解包目录
 rm -rf "${SQUASHFS_ROOT}"
+
+# 最终验证：列出 casper/ 所有 squashfs 文件
+step "验证 casper/ 最终状态"
+info "casper/ squashfs 文件："
+ls -lhS "${CASPER_DIR}"/*.squashfs 2>/dev/null | awk '{printf "  %s (%s)\n", $NF, $5}'
+[[ -f "${SQUASHFS_BASE}" ]] && ok "base 层存在" || error "base 层丢失！"
+[[ -f "${SQUASHFS_SERVER}" ]] && ok "server 层存在" || error "server 层丢失！"
 ok "squashfs 定制完成"
