@@ -168,40 +168,52 @@ IEOF
 fi
 ok "GRUB 配置完成"
 
-# ──── 第 8 步：封装 ISO ────
-step "封装 ISO"
+# ──── 第 8 步：从原始 ISO 提取引导记录 ────
+step "提取原始 ISO 引导记录"
+MBR_BIN="/tmp/iso-mbr.bin"
+EFI_PART="/tmp/efi-part.img"
+
+# 提取 MBR（前 432 字节，不覆盖分区表）
+dd if="${UBUNTU_ISO_PATH}" bs=1 count=432 of="${MBR_BIN}" 2>/dev/null
+ok "MBR 已提取（$(wc -c < "${MBR_BIN}") 字节）"
+
+# 从原始 ISO 提取 EFI 系统分区镜像
+EFI_START=$(fdisk -l "${UBUNTU_ISO_PATH}" 2>/dev/null | grep -i "EFI" | awk '{print $2}')
+EFI_END=$(fdisk -l "${UBUNTU_ISO_PATH}" 2>/dev/null | grep -i "EFI" | awk '{print $3}')
+
+if [[ -n "${EFI_START}" && -n "${EFI_END}" ]]; then
+  EFI_SIZE=$((EFI_END - EFI_START + 1))
+  dd if="${UBUNTU_ISO_PATH}" bs=512 skip="${EFI_START}" count="${EFI_SIZE}" of="${EFI_PART}" 2>/dev/null
+  ok "EFI 分区已提取（$(du -sh "${EFI_PART}" | cut -f1)）"
+else
+  # 备选方案：尝试用 xorriso 从原始 ISO 获取引导参数
+  warn "fdisk 未找到 EFI 分区，尝试 xorriso 提取..."
+  xorriso -indev "${UBUNTU_ISO_PATH}" -report_el_torito as_mkisofs 2>&1 | head -20
+  error "无法提取 EFI 引导分区，请检查源 ISO 完整性"
+fi
+
+# ──── 第 9 步：封装 ISO ────
+step "封装 ISO（UEFI + Legacy BIOS 双模式）"
 rm -f "${OUTPUT_ISO}"
 
-MBR_IMG="${WORK_DIR}/boot/grub/i386-pc/boot_hybrid.img"
-EFI_IMG="${WORK_DIR}/boot/grub/efi.img"
+xorriso -as mkisofs \
+  -r -V "Ubuntu-2204-AutoInstall" \
+  -o "${OUTPUT_ISO}" \
+  --grub2-mbr "${MBR_BIN}" \
+  -partition_offset 16 --mbr-force-bootable \
+  -append_partition 2 28732ac11ff8d211ba4b00a0c93ec93b "${EFI_PART}" \
+  -appended_part_as_gpt \
+  -iso_mbr_part_type a2a0d0ebe5b9334487c068b6b72699c7 \
+  -c '/boot.catalog' \
+  -b '/boot/grub/i386-pc/eltorito.img' \
+  -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info \
+  -eltorito-alt-boot \
+  -e '--interval:appended_partition_2:::' \
+  -no-emul-boot \
+  "${WORK_DIR}" 2>&1 | tail -5
 
-if [[ -f "${MBR_IMG}" && -f "${EFI_IMG}" ]]; then
-  info "UEFI + Legacy BIOS 双模式"
-  xorriso -as mkisofs \
-    -r -V "Ubuntu-2204-AutoInstall" \
-    -o "${OUTPUT_ISO}" \
-    --grub2-mbr "${MBR_IMG}" \
-    -partition_offset 16 --mbr-force-bootable \
-    -append_partition 2 28732ac11ff8d211ba4b00a0c93ec93b "${EFI_IMG}" \
-    -appended_part_as_gpt \
-    -iso_mbr_part_type a2a0d0ebe5b9334487c068b6b72699c7 \
-    -c '/boot/grub/boot.cat' \
-    -b '/boot/grub/i386-pc/eltorito.img' \
-    -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info \
-    -eltorito-alt-boot \
-    -e '--interval:appended_partition_2:::' \
-    -no-emul-boot \
-    "${WORK_DIR}" 2>&1 | tail -5
-else
-  info "GRUB EFI 单模式"
-  xorriso -as mkisofs \
-    -r -V "Ubuntu-2204-AutoInstall" \
-    -o "${OUTPUT_ISO}" \
-    -c '/boot/grub/boot.cat' \
-    -b '/boot/grub/i386-pc/eltorito.img' \
-    -no-emul-boot -boot-load-size 4 -boot-info-table \
-    "${WORK_DIR}" 2>&1 | tail -5
-fi
+# 清理临时文件
+rm -f "${MBR_BIN}" "${EFI_PART}"
 
 rm -rf "${WORK_DIR}"
 

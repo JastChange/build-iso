@@ -175,7 +175,7 @@ if [[ -f "${INSTALL_SRC}" ]]; then
 
   # 验证引用的 squashfs 是否存在
   while IFS= read -r uri; do
-    SQFS_PATH="${MNT}${uri}"
+    SQFS_PATH="${MNT}/${uri}"
     if [[ -f "${SQFS_PATH}" ]]; then
       ok "引用的 squashfs 存在：${uri}（$(du -sh "${SQFS_PATH}" | cut -f1)）"
     else
@@ -196,24 +196,43 @@ elif [[ ${SQFS_FILES} -gt 0 ]]; then
   ok "无残留 .squashfs.gpg 签名文件"
 fi
 
-# 尝试挂载 squashfs 验证完整性
-SQFS_FILE=$(ls "${MNT}/casper/"*.squashfs 2>/dev/null | head -1)
+# 尝试挂载 squashfs 验证完整性（优先选 install-sources.yaml 引用的文件）
+SQFS_FILE=""
+if [[ -f "${INSTALL_SRC}" ]]; then
+  SQFS_REF=$(grep -oP 'cp:///\K\S+' "${INSTALL_SRC}" | head -1)
+  [[ -n "${SQFS_REF}" && -f "${MNT}/${SQFS_REF}" ]] && SQFS_FILE="${MNT}/${SQFS_REF}"
+fi
+# 回退：选最大的 squashfs 文件
+[[ -z "${SQFS_FILE}" ]] && SQFS_FILE=$(ls -S "${MNT}/casper/"*.squashfs 2>/dev/null | head -1)
 if [[ -n "${SQFS_FILE}" ]]; then
   mkdir -p "${SQUASHFS_MNT}"
   umount "${SQUASHFS_MNT}" 2>/dev/null || true
   if mount -t squashfs -o loop,ro "${SQFS_FILE}" "${SQUASHFS_MNT}" 2>/dev/null; then
     ok "squashfs 可正常挂载"
 
-    # 检查基础目录
-    for d in usr bin sbin etc lib; do
+    # 检查基础目录（Ubuntu 22.04 使用 merged-usr：/bin → /usr/bin 是符号链接）
+    for d in usr etc; do
       [[ -d "${SQUASHFS_MNT}/${d}" ]] && ok "squashfs 包含 /${d}" || fail "squashfs 缺少 /${d}"
+    done
+    for d in bin sbin lib; do
+      if [[ -d "${SQUASHFS_MNT}/${d}" ]]; then
+        ok "squashfs 包含 /${d}（目录）"
+      elif [[ -L "${SQUASHFS_MNT}/${d}" ]]; then
+        ok "squashfs 包含 /${d}（→ $(readlink "${SQUASHFS_MNT}/${d}")，merged-usr 符号链接）"
+      else
+        fail "squashfs 缺少 /${d}"
+      fi
     done
 
     # 检查 init 系统
-    if [[ -f "${SQUASHFS_MNT}/sbin/init" || -L "${SQUASHFS_MNT}/sbin/init" ]]; then
+    if [[ -e "${SQUASHFS_MNT}/sbin/init" ]]; then
       ok "squashfs 有 /sbin/init"
+    elif [[ -e "${SQUASHFS_MNT}/usr/sbin/init" ]]; then
+      ok "squashfs 有 /usr/sbin/init（merged-usr）"
+    elif [[ -e "${SQUASHFS_MNT}/usr/lib/systemd/systemd" ]]; then
+      ok "squashfs 有 systemd（/usr/lib/systemd/systemd）"
     else
-      fail "squashfs 缺少 /sbin/init（系统无法启动）"
+      fail "squashfs 缺少 init 系统（无法启动）"
     fi
 
     # 检查预装包
@@ -235,20 +254,19 @@ fi
 section "6. 引导文件完整性"
 
 # 检查 BIOS 引导
-for f in boot/grub/i386-pc/eltorito.img boot/grub/i386-pc/boot_hybrid.img; do
+if [[ -f "${MNT}/boot/grub/i386-pc/eltorito.img" ]]; then
+  ok "eltorito.img 存在（BIOS El Torito 引导）"
+else
+  warn "eltorito.img 缺失"
+fi
+
+# 检查 EFI 引导（注意：boot_hybrid.img 和 efi.img 在 22.04.5 中不在 ISO 内，
+# 应从原始 ISO 的 MBR 和 EFI 分区提取后用 xorriso 嵌入）
+for f in EFI/boot/bootx64.efi EFI/boot/grubx64.efi; do
   if [[ -f "${MNT}/${f}" ]]; then
     ok "${f} 存在"
-  else
-    warn "${f} 缺失（Legacy BIOS 引导可能失败）"
   fi
 done
-
-# 检查 EFI 引导
-if [[ -f "${MNT}/boot/grub/efi.img" ]]; then
-  ok "boot/grub/efi.img 存在"
-else
-  warn "efi.img 缺失（UEFI 引导可能失败）"
-fi
 
 section "7. ISO 引导记录检查"
 
