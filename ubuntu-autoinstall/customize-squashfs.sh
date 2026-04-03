@@ -242,38 +242,29 @@ cleanup_chroot
 trap - EXIT  # 清除 trap，因为已手动调用
 
 if [[ "${SQUASHFS_IS_LAYERED}" == true ]]; then
-  # 分层模式：合并为单个 squashfs
-  # initrd 硬编码检查 ubuntu-server-minimal.squashfs，必须用 base 层文件名
-  info "合并 base + server 层为单个 squashfs（使用 base 层文件名）"
+  # 分层模式：initrd live-server 脚本硬编码挂载三类 squashfs：
+  #   1. ubuntu-server-minimal.squashfs              → /media/minimal（base 层）
+  #   2. ubuntu-server-minimal.ubuntu-server.squashfs → /media/full（server 层）
+  #   3. *.installer.*.squashfs                       → LAYERFS_PATH（installer 层）
+  # 策略：只替换 server 层（base + server 合并内容），其余全部保留原样
+  info "仅替换 server 层：${SQUASHFS_SERVER}"
 
-  # 删除所有旧的 squashfs 文件及签名
-  rm -f "${CASPER_DIR}"/*.squashfs "${CASPER_DIR}"/*.squashfs.gpg
-  warn "已删除旧 squashfs 及签名文件"
+  # 只删除 server 层的 squashfs 和签名
+  rm -f "${SQUASHFS_SERVER}" "${SQUASHFS_SERVER}.gpg"
 
-  # 打包为 base 层文件名（initrd 启动时检查此文件）
-  mksquashfs "${SQUASHFS_ROOT}" "${SQUASHFS_BASE}" \
+  # 将合并后的内容重新打包为 server 层
+  mksquashfs "${SQUASHFS_ROOT}" "${SQUASHFS_SERVER}" \
     -comp xz -b 1M -Xdict-size 100% \
     -no-progress 2>&1 | tail -3
-  ok "squashfs 打包完成（$(du -sh "${SQUASHFS_BASE}" | cut -f1)）"
+  ok "server 层重新打包完成（$(du -sh "${SQUASHFS_SERVER}" | cut -f1)）"
 
-  # 更新 install-sources.yaml，指向 base 层文件名
-  INSTALL_SOURCES="${CASPER_DIR}/install-sources.yaml"
-  if [[ -f "${INSTALL_SOURCES}" ]]; then
-    cp "${INSTALL_SOURCES}" "${INSTALL_SOURCES}.orig"
-  fi
-  cat > "${INSTALL_SOURCES}" << 'YAMLEOF'
-- uri: cp:///casper/ubuntu-server-minimal.squashfs
-  paths:
-    - /
-YAMLEOF
-  ok "install-sources.yaml 已更新（单层：ubuntu-server-minimal.squashfs）"
+  # 更新 server 层的 size 文件
+  du -sx --block-size=1 "${SQUASHFS_ROOT}" | cut -f1 > "${CASPER_DIR}/ubuntu-server-minimal.ubuntu-server.size"
 
-  # 更新 size / manifest 文件
-  du -sx --block-size=1 "${SQUASHFS_ROOT}" | cut -f1 > "${CASPER_DIR}/ubuntu-server-minimal.size"
-  # 删除不再需要的其他层的 size/manifest 文件
-  rm -f "${CASPER_DIR}"/ubuntu-server-minimal.ubuntu-server*.size
-  rm -f "${CASPER_DIR}"/ubuntu-server-minimal.ubuntu-server*.manifest
-  ok "size 文件已更新"
+  # base 层、installer 层、install-sources.yaml 全部保持原样不动
+  ok "base 层保留原样（$(du -sh "${SQUASHFS_BASE}" | cut -f1)）"
+  ok "installer 层保留原样"
+  ok "install-sources.yaml 保留原样"
 else
   # 单文件模式
   rm -f "${SQUASHFS}"
