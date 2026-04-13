@@ -8,6 +8,7 @@
 - **全自动安装** — Subiquity autoinstall，无人值守
 - **离线驱动支持** — Mellanox OFED / NVIDIA GPU 驱动离线安装
 - **可选离线仓库** — 本地 APT 仓库 + GPG 签名（需要指定内核版本时启用）
+- **固定内核版本** — 支持通过 `extras/config/kernel.env` 指定目标内核版本，并在安装阶段离线安装与可选锁定
 
 ## 项目结构
 
@@ -23,6 +24,8 @@ ubuntu-autoinstall/
     │   ├── post-install.sh   # 安装后主脚本
     │   ├── install-mlnx.sh   # Mellanox OFED 安装
     │   └── install-nvidia.sh # NVIDIA 驱动安装
+    ├── config/
+    │   └── kernel.env        # 固定内核版本 / 离线仓库配置
     ├── keys/
     │   └── authorized_keys   # SSH 公钥（每行一条）
     ├── drivers/              # 驱动文件（手动放入）
@@ -77,6 +80,55 @@ sudo bash ubuntu-autoinstall/build.sh
 8. 封装 ISO（UEFI + Legacy BIOS 双模式）
 
 输出：`/home/isobuild/ubuntu-22.04-autoinstall-YYYYMMDD.iso`
+
+### 指定固定内核版本（可选）
+
+编辑 `ubuntu-autoinstall/extras/config/kernel.env`：
+
+```bash
+KERNEL_VERSION="5.15.0-164"
+KERNEL_FLAVOR="generic"
+INSTALL_MODE="repo"
+KERNEL_HOLD="true"
+```
+
+推荐离线方式（`repo` 模式）：
+
+```bash
+# 1. 下载或手动准备目标内核 deb
+./scripts/download-kernel.sh 5.15.0-164 ./kernel-debs
+
+# 2. 放入本地离线仓库
+mkdir -p ubuntu-autoinstall/extras/repo/pool
+cp ./kernel-debs/*.deb ubuntu-autoinstall/extras/repo/pool/
+
+# 3. 生成离线仓库索引与签名
+bash ubuntu-autoinstall/build-repo.sh
+
+# 4. 构建 ISO
+sudo bash ubuntu-autoinstall/build.sh
+```
+
+安装阶段会自动：
+- 复制 `/cdrom/extras` 到目标机 `/opt/extras`
+- 运行 `post-install.sh`
+- 读取 `extras/config/kernel.env`
+- 按 `INSTALL_MODE=deb|repo|auto` 选择安装方式
+- 安装指定内核并按需 `apt-mark hold`
+
+如果你想先走更直接的 `deb` 模式：
+
+```bash
+KERNEL_VERSION="5.15.0-164"
+INSTALL_MODE="deb"
+KERNEL_HOLD="true"
+```
+
+然后把对应内核包直接放入：
+
+```bash
+ubuntu-autoinstall/extras/debs/
+```
 
 ### 4. 刻录 U 盘
 
@@ -164,7 +216,11 @@ cp *.deb ubuntu-autoinstall/extras/repo/pool/
 bash ubuntu-autoinstall/build-repo.sh
 ```
 
-需要同时在 `user-data` 的 `late-commands` 中配置仓库源。
+`late-commands` 和 `post-install.sh` 已经会自动把 `/cdrom/extras` 接到目标系统；当配置了 `KERNEL_VERSION` 时，会按 `INSTALL_MODE` 选择 `extras/repo/` 或 `extras/debs/` 作为固定内核来源。
+
+### 文档
+
+- 固定内核版本与离线安装完整说明：`ubuntu-autoinstall/docs/offline-kernel-versioning.md`
 
 ### QEMU 测试
 
