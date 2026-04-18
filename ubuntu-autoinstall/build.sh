@@ -4,10 +4,10 @@
 set -euo pipefail
 
 # ════════════════ 配置区 ════════════════
-UBUNTU_ISO_PATH="/opt/ubuntu-22.04.5-live-server-amd64.iso"
+UBUNTU_ISO_PATH="${UBUNTU_ISO_PATH:-/opt/ubuntu-22.04.5-live-server-amd64.iso}"
 BUILD_DATE="$(date '+%Y%m%d')"
-OUTPUT_ISO="/home/isobuild/ubuntu-22.04-autoinstall-${BUILD_DATE}.iso"
-WORK_DIR="/tmp/iso-build-work"
+OUTPUT_ISO="${OUTPUT_ISO:-/home/isobuild/ubuntu-22.04-autoinstall-${BUILD_DATE}.iso}"
+WORK_DIR="${WORK_DIR:-/tmp/iso-build-work}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ════════════════════════════════════════
 
@@ -18,6 +18,27 @@ step()  { echo -e "\n${BOLD}${BLUE}──── $* ────${NC}"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
+
+validate_iso_contents() {
+  local iso_path="$1"
+  local required_paths=(
+    "/autoinstall/user-data"
+    "/autoinstall/meta-data"
+    "/extras/scripts/post-install.sh"
+    "/extras/config/kernel.env"
+    "/boot/grub/grub.cfg"
+  )
+  local path=""
+
+  step "验证输出 ISO 内容"
+  for path in "${required_paths[@]}"; do
+    if xorriso -indev "${iso_path}" -find "${path}" -print -quit >/dev/null 2>&1; then
+      ok "ISO 中存在 ${path}"
+    else
+      error "输出 ISO 缺少关键文件：${path}"
+    fi
+  done
+}
 
 [[ $EUID -ne 0 ]] && error "请以 root 权限运行：sudo bash $0"
 
@@ -226,6 +247,8 @@ xorriso -as mkisofs \
   -e '--interval:appended_partition_2:::' \
   -no-emul-boot \
   "${WORK_DIR}" 2>&1 | tail -5
+
+validate_iso_contents "${OUTPUT_ISO}"
 
 # 清理临时文件
 rm -f "${MBR_BIN}" "${EFI_PART}"

@@ -38,7 +38,7 @@ ubuntu-autoinstall/
 ### 1. 环境要求
 
 - Ubuntu 构建机（需要 root 权限）
-- 已下载 Ubuntu 22.04 Server ISO 到 `/opt/ubuntu-22.04-live-server-amd64.iso`
+- 已下载 Ubuntu 22.04.5 Server ISO 到 `/opt/ubuntu-22.04.5-live-server-amd64.iso`
 
 安装构建依赖：
 
@@ -241,6 +241,14 @@ sudo qemu-system-x86_64 \
 编辑 `build.sh` 顶部配置区：
 
 ```bash
-UBUNTU_ISO_PATH="/opt/ubuntu-22.04-live-server-amd64.iso"  # 源 ISO 路径
+UBUNTU_ISO_PATH="/opt/ubuntu-22.04.5-live-server-amd64.iso"  # 源 ISO 路径
 OUTPUT_ISO="/home/isobuild/ubuntu-22.04-autoinstall-${BUILD_DATE}.iso"  # 输出路径
+```
+
+也可以用环境变量覆盖而不改脚本：
+
+```bash
+sudo UBUNTU_ISO_PATH=/path/to/ubuntu-22.04.5-live-server-amd64.iso \
+     OUTPUT_ISO=/path/to/output.iso \
+     bash ubuntu-autoinstall/build.sh
 ```
