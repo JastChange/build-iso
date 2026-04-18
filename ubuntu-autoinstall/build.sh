@@ -22,22 +22,30 @@ ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 validate_iso_contents() {
   local iso_path="$1"
   local required_paths=(
-    "/autoinstall/user-data"
-    "/autoinstall/meta-data"
-    "/extras/scripts/post-install.sh"
-    "/extras/config/kernel.env"
-    "/boot/grub/grub.cfg"
+    "autoinstall/user-data"
+    "autoinstall/meta-data"
+    "extras/scripts/post-install.sh"
+    "extras/config/kernel.env"
+    "boot/grub/grub.cfg"
   )
   local path=""
+  local mount_dir
+
+  mount_dir="$(mktemp -d)"
 
   step "验证输出 ISO 内容"
+  mount -o loop,ro "${iso_path}" "${mount_dir}"
   for path in "${required_paths[@]}"; do
-    if xorriso -indev "${iso_path}" -find "${path}" -print -quit >/dev/null 2>&1; then
-      ok "ISO 中存在 ${path}"
+    if [[ -e "${mount_dir}/${path}" ]]; then
+      ok "ISO 中存在 /${path}"
     else
-      error "输出 ISO 缺少关键文件：${path}"
+      umount "${mount_dir}" || true
+      rmdir "${mount_dir}" || true
+      error "输出 ISO 缺少关键文件：/${path}"
     fi
   done
+  umount "${mount_dir}"
+  rmdir "${mount_dir}"
 }
 
 [[ $EUID -ne 0 ]] && error "请以 root 权限运行：sudo bash $0"
@@ -141,6 +149,7 @@ ok "autoinstall/ 注入完成"
 step "注入 extras（脚本 / 驱动 / 密钥）"
 cp -r "${SCRIPT_DIR}/extras" "${WORK_DIR}/extras"
 chmod +x "${WORK_DIR}/extras/scripts/"*.sh 2>/dev/null || true
+find "${WORK_DIR}/extras" -name '._*' -delete 2>/dev/null || true
 
 MLNX=$(ls "${WORK_DIR}/extras/drivers/"MLNX_OFED*.tgz 2>/dev/null | head -1 || true)
 NVCR=$(ls "${WORK_DIR}/extras/drivers/"NVIDIA-Linux*.run 2>/dev/null | head -1 || true)
