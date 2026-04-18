@@ -92,6 +92,15 @@ INSTALL_MODE="repo"
 KERNEL_HOLD="true"
 ```
 
+默认仓库配置中：
+
+```bash
+KERNEL_VERSION=""
+INSTALL_MODE="auto"
+```
+
+也就是**默认不开启固定内核安装**。只有在你明确准备好目标内核包（本地 repo 或 deb）之后，才应该把 `KERNEL_VERSION` 改成具体版本。
+
 推荐离线方式（`repo` 模式）：
 
 ```bash

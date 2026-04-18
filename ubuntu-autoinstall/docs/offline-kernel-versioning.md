@@ -49,6 +49,19 @@ KERNEL_HOLD="true"
   - `true`：安装后 `apt-mark hold`
   - `false`：不锁定
 
+默认仓库状态下，`kernel.env` 应保持：
+
+```bash
+KERNEL_VERSION=""
+INSTALL_MODE="auto"
+```
+
+也就是说：
+
+- 默认不做固定内核安装
+- 只有在你明确准备好目标版本内核包之后，才填写 `KERNEL_VERSION`
+- 否则 `post-install.sh` 会直接跳过内核版本锁定逻辑
+
 ### 2. 目标内核 deb 包
 
 离线安装至少建议准备这一组：
