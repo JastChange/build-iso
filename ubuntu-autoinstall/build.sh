@@ -19,6 +19,59 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 
+inject_ssh_authorized_keys() {
+  local user_data_path="$1"
+  local keys_path="$2"
+
+  [[ -s "${keys_path}" ]] || return 0
+
+  python3 - "${user_data_path}" "${keys_path}" <<'PY'
+import pathlib
+import sys
+
+user_data_path = pathlib.Path(sys.argv[1])
+keys_path = pathlib.Path(sys.argv[2])
+
+keys = [
+    line.strip()
+    for line in keys_path.read_text().splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+]
+if not keys:
+    sys.exit(0)
+
+lines = user_data_path.read_text().splitlines()
+out = []
+inserted = False
+skip_existing = False
+
+for line in lines:
+    stripped = line.strip()
+
+    if stripped == "authorized-keys:":
+        skip_existing = True
+        continue
+
+    if skip_existing:
+        if line.startswith("      - "):
+            continue
+        skip_existing = False
+
+    out.append(line)
+    if stripped == "allow-pw: true" and not inserted:
+        out.append("    authorized-keys:")
+        for key in keys:
+            escaped = key.replace("\\", "\\\\").replace('"', '\\"')
+            out.append(f'      - "{escaped}"')
+        inserted = True
+
+if not inserted:
+    raise SystemExit("未在 user-data 中找到 ssh.allow-pw，无法注入 authorized-keys")
+
+user_data_path.write_text("\n".join(out) + "\n")
+PY
+}
+
 validate_iso_contents() {
   local iso_path="$1"
   local required_paths=(
@@ -162,6 +215,8 @@ KEYS="${WORK_DIR}/extras/keys/authorized_keys"
 if [[ -s "${KEYS}" ]]; then
   KEY_COUNT=$(grep -c "^ssh-" "${KEYS}" 2>/dev/null || echo 0)
   ok "SSH 公钥     ：${KEY_COUNT} 条"
+  inject_ssh_authorized_keys "${WORK_DIR}/autoinstall/user-data" "${KEYS}"
+  ok "autoinstall 已注入 authorized-keys"
 else
   warn "authorized_keys 为空（安装后无密钥登录）"
 fi
