@@ -268,15 +268,16 @@ fi
 NVIDIA_RUN=$(ls "${EXTRAS_DIR}/drivers"/NVIDIA-Linux-x86_64-*.run 2>/dev/null | head -1 || true)
 if [[ -n "${NVIDIA_RUN}" ]]; then
   log "发现 NVIDIA 驱动：$(basename "${NVIDIA_RUN}")"
-  bash "${EXTRAS_DIR}/scripts/install-nvidia.sh" "${NVIDIA_RUN}" 2>&1 | tee -a "${LOG_FILE}"
+  bash "${EXTRAS_DIR}/scripts/install-nvidia.sh" "${NVIDIA_RUN}" 2>&1 | tee -a "${LOG_FILE}" || log "NVIDIA 驱动安装失败，继续执行"
 else
   log "未发现 NVIDIA 驱动，跳过"
 fi
 
-install_target_kernel
+install_target_kernel || log "内核固定安装失败，继续执行"
 
 # ── 在此追加其他自定义操作 ──
 # log "示例：安装 Docker..."
 # curl -fsSL https://get.docker.com | sh
 
 log "===== post-install.sh 完成 ====="
+
