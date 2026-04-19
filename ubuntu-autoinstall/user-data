@@ -110,5 +110,5 @@ autoinstall:
   late-commands:
     - mkdir -p /target/opt
     - cp -a /cdrom/extras /target/opt/
-    - curtin in-target --target=/target -- chmod +x /opt/extras/scripts/*.sh
+    - bash -c "chmod +x /target/opt/extras/scripts/*.sh || true"
     - curtin in-target --target=/target -- bash /opt/extras/scripts/post-install.sh
