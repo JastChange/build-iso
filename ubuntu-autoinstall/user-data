@@ -110,9 +110,10 @@ autoinstall:
   late-commands:
     - mkdir -p /target/opt
     - cp -a /cdrom/extras /target/opt/
-    - curtin in-target --target=/target -- install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+    - curtin in-target --target=/target -- mkdir -p /home/ubuntu/.ssh
+    - curtin in-target --target=/target -- chmod 700 /home/ubuntu/.ssh
     - test -s /cdrom/extras/keys/authorized_keys && cp /cdrom/extras/keys/authorized_keys /target/home/ubuntu/.ssh/authorized_keys || true
-    - test -s /target/home/ubuntu/.ssh/authorized_keys && curtin in-target --target=/target -- chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys || true
+    - test -s /target/home/ubuntu/.ssh/authorized_keys && curtin in-target --target=/target -- chown -R 1000:1000 /home/ubuntu/.ssh || true
     - test -s /target/home/ubuntu/.ssh/authorized_keys && curtin in-target --target=/target -- chmod 600 /home/ubuntu/.ssh/authorized_keys || true
     - curtin in-target --target=/target -- chmod +x /opt/extras/scripts/*.sh
     - curtin in-target --target=/target -- bash /opt/extras/scripts/post-install.sh
