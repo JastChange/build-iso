@@ -24,6 +24,7 @@ mkdir -p /tmp/ofed-build
   --without-fw-update \
   --add-kernel-support \
   --force \
+  --skip-distro-check \
   --tmpdir /tmp/ofed-build \
   2>&1 | tee -a "${LOG}"
 
