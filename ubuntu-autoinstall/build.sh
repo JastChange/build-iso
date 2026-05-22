@@ -78,7 +78,11 @@ validate_iso_contents() {
     "autoinstall/user-data"
     "autoinstall/meta-data"
     "extras/scripts/post-install.sh"
+    "extras/scripts/firstboot.sh"
+    "extras/lib/iso-functions.sh"
     "extras/config/kernel.env"
+    "extras/config/firstboot.env"
+    "extras/config/packages.list"
     "boot/grub/grub.cfg"
   )
   local path=""
@@ -204,7 +208,7 @@ cp -r "${SCRIPT_DIR}/extras" "${WORK_DIR}/extras"
 chmod +x "${WORK_DIR}/extras/scripts/"*.sh 2>/dev/null || true
 find "${WORK_DIR}/extras" -name '._*' -delete 2>/dev/null || true
 
-MLNX=$(ls "${WORK_DIR}/extras/drivers/"MLNX_OFED*.tgz 2>/dev/null | head -1 || true)
+MLNX=$(find "${WORK_DIR}/extras/drivers" -maxdepth 1 -type f \( -name 'MLNX_OFED*.tgz' -o -name 'MLNX_OFED*.iso' \) 2>/dev/null | sort | head -1 || true)
 NVCR=$(ls "${WORK_DIR}/extras/drivers/"NVIDIA-Linux*.run 2>/dev/null | head -1 || true)
 KEYS="${WORK_DIR}/extras/keys/authorized_keys"
 
@@ -213,7 +217,7 @@ KEYS="${WORK_DIR}/extras/keys/authorized_keys"
 [[ -n "${NVCR}" ]] && ok "NVIDIA 驱动   ：$(basename "${NVCR}")" \
                     || warn "未发现 NVIDIA 驱动（可选，构建继续）"
 if [[ -s "${KEYS}" ]]; then
-  KEY_COUNT=$(grep -c "^ssh-" "${KEYS}" 2>/dev/null || echo 0)
+  KEY_COUNT=$(grep -vcE '^[[:space:]]*($|#)' "${KEYS}" 2>/dev/null || echo 0)
   ok "SSH 公钥     ：${KEY_COUNT} 条"
   inject_ssh_authorized_keys "${WORK_DIR}/autoinstall/user-data" "${KEYS}"
   ok "autoinstall 已注入 authorized-keys"

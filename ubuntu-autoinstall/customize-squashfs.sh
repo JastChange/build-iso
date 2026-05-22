@@ -1,5 +1,5 @@
 #!/bin/bash
-# customize-squashfs.sh — 定制 squashfs（预装软件包 + 替换驱动）
+# customize-squashfs.sh — 定制 squashfs（预装软件包 + 驱动依赖）
 # 参数：$1 = ISO 解包工作目录
 set -euo pipefail
 
@@ -14,6 +14,15 @@ SQUASHFS_BASE="${CASPER_DIR}/ubuntu-server-minimal.squashfs"
 SQUASHFS_SERVER="${CASPER_DIR}/ubuntu-server-minimal.ubuntu-server.squashfs"
 # 兼容旧版 ISO（单文件 filesystem.squashfs）
 SQUASHFS_LEGACY="${CASPER_DIR}/filesystem.squashfs"
+PACKAGES_FILE="${SCRIPT_DIR}/extras/config/packages.list"
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
+info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
+step()  { echo -e "\n${BOLD}${BLUE}──── $* ────${NC}"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 
 # 自动检测 squashfs 路径
 if [[ -f "${SQUASHFS_SERVER}" ]]; then
@@ -28,26 +37,18 @@ else
   error "未找到可用的 squashfs 文件"
 fi
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
-info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-step()  { echo -e "\n${BOLD}${BLUE}──── $* ────${NC}"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
-ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
-
 [[ $EUID -ne 0 ]] && error "需要 root 权限"
 command -v unsquashfs &>/dev/null || error "缺少 squashfs-tools"
 command -v mksquashfs &>/dev/null || error "缺少 squashfs-tools"
 
 # ──── 扫描 extras/drivers 驱动文件 ────
 DRIVERS_DIR="${SCRIPT_DIR}/extras/drivers"
-MLNX_TGZ="$(ls "${DRIVERS_DIR}"/MLNX_OFED_LINUX-*.tgz 2>/dev/null | head -1 || true)"
+MLNX_PACKAGE="$(find "${DRIVERS_DIR}" -maxdepth 1 -type f \( -name 'MLNX_OFED_LINUX-*.tgz' -o -name 'MLNX_OFED_LINUX-*.iso' \) 2>/dev/null | sort | head -1 || true)"
 NVIDIA_RUN="$(ls "${DRIVERS_DIR}"/NVIDIA-Linux-x86_64-*.run 2>/dev/null | head -1 || true)"
 
 step "扫描驱动文件"
-if [[ -n "${MLNX_TGZ}" ]]; then
-  MLNX_BASENAME="$(basename "${MLNX_TGZ}")"
+if [[ -n "${MLNX_PACKAGE}" ]]; then
+  MLNX_BASENAME="$(basename "${MLNX_PACKAGE}")"
   ok "Mellanox OFED : ${MLNX_BASENAME}"
 else
   info "未发现 Mellanox OFED（可选）"
@@ -109,30 +110,42 @@ fi
 # ──── 第 4 步：chroot 安装预装包 ────
 step "安装预装软件包"
 
-# 预装包列表（所有需要的软件都在这里，user-data 中不再声明 packages）
-PREINSTALL_PACKAGES=(
-  # 基础工具
+DEFAULT_PREINSTALL_PACKAGES=(
   openssh-server curl wget vim htop net-tools
-  # 编译工具链（驱动编译必需）
   build-essential gcc g++ make cmake
   dkms linux-headers-generic
-  # Python（Mellanox OFED 必需）
   python3 python3-dev python3-distutils
-  # Mellanox OFED 依赖
   ethtool lsof pciutils numactl libnuma-dev
   tk tcl libglib2.0-0 libfuse2
   libibverbs-dev librdmacm-dev rdma-core
-  # NVIDIA 驱动依赖
   pkg-config libglvnd-dev
   kmod initramfs-tools
 )
 
-chroot "${SQUASHFS_ROOT}" bash -c "
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -q
-  apt-get install -y -q --no-install-recommends ${PREINSTALL_PACKAGES[*]}
-" 2>&1 | tee -a "${LOG}"
-ok "预装包安装完成"
+read_package_list() {
+  local package_file="$1"
+  sed -e 's/#.*$//' -e '/^[[:space:]]*$/d' "${package_file}" | awk '{print $1}'
+}
+
+if [[ -f "${PACKAGES_FILE}" ]]; then
+  mapfile -t PREINSTALL_PACKAGES < <(read_package_list "${PACKAGES_FILE}")
+  ok "读取预装包配置：${PACKAGES_FILE}（${#PREINSTALL_PACKAGES[@]} 个）"
+else
+  PREINSTALL_PACKAGES=("${DEFAULT_PREINSTALL_PACKAGES[@]}")
+  warn "未发现 ${PACKAGES_FILE}，使用内置默认预装包"
+fi
+
+if [[ "${#PREINSTALL_PACKAGES[@]}" -gt 0 ]]; then
+  info "预装包：${PREINSTALL_PACKAGES[*]}"
+  chroot "${SQUASHFS_ROOT}" bash -c "
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -q
+    apt-get install -y -q --no-install-recommends ${PREINSTALL_PACKAGES[*]}
+  " 2>&1 | tee -a "${LOG}"
+  ok "预装包安装完成"
+else
+  warn "预装包列表为空，跳过 apt 安装"
+fi
 
 # ──── 第 5 步：替换特定版本 deb 包 ────
 step "替换特定版本 deb 包"
@@ -150,93 +163,24 @@ else
   info "extras/debs/ 为空，跳过"
 fi
 
-# ──── 第 6 步：安装 Mellanox OFED ────
-if [[ -n "${MLNX_TGZ}" ]]; then
-  step "安装 Mellanox OFED：${MLNX_BASENAME}"
-  cp "${MLNX_TGZ}" "${SQUASHFS_ROOT}/tmp/${MLNX_BASENAME}"
-  chroot "${SQUASHFS_ROOT}" bash -c "
-    set -euo pipefail
-    cd /tmp
-    tar xzf '${MLNX_BASENAME}'
-    OFED_DIR=\$(find /tmp -maxdepth 1 -type d -name 'MLNX_OFED*' | head -1)
-    if [[ -z \"\${OFED_DIR}\" ]]; then
-      echo '[ERROR] 未找到 MLNX_OFED 目录'; exit 1
-    fi
-    export DEBIAN_FRONTEND=noninteractive
-    \"\${OFED_DIR}/mlnxofedinstall\" \
-      --without-fw-update \
-      --add-kernel-support \
-      --force \
-      --tmpdir /tmp/ofed-build \
-      2>&1 || echo '[WARN] OFED 安装有警告'
-    rm -rf /tmp/MLNX_OFED* /tmp/ofed-build /tmp/${MLNX_BASENAME}
-  " 2>&1 | tee -a "${LOG}"
-  ok "Mellanox OFED 安装完成"
-fi
+# ──── 第 6 步：驱动安装策略 ────
+step "驱动安装策略"
+info "驱动包不在 squashfs 构建阶段安装，会随 extras 注入 ISO"
+info "目标系统首次开机后由 /opt/extras/scripts/firstboot.sh 在真实内核下安装驱动"
 
-# ──── 第 7 步：安装 NVIDIA 驱动 ────
-if [[ -n "${NVIDIA_RUN}" ]]; then
-  step "安装 NVIDIA 驱动：${NVIDIA_BASENAME}"
-  cp "${NVIDIA_RUN}" "${SQUASHFS_ROOT}/tmp/${NVIDIA_BASENAME}"
-  chroot "${SQUASHFS_ROOT}" bash -c "
-    set -euo pipefail
-    chmod +x '/tmp/${NVIDIA_BASENAME}'
-
-    # 禁用 Nouveau
-    cat > /etc/modprobe.d/blacklist-nouveau.conf << 'MODEOF'
-blacklist nouveau
-blacklist lbm-nouveau
-options nouveau modeset=0
-alias nouveau off
-MODEOF
-    update-initramfs -u 2>/dev/null || true
-
-    # 安装 userspace（内核模块由 firstboot 编译）
-    '/tmp/${NVIDIA_BASENAME}' \
-      --no-kernel-module \
-      --ui=none \
-      --no-questions \
-      --accept-license \
-      --install-libglvnd \
-      2>&1 || echo '[WARN] NVIDIA userspace 安装有警告'
-
-    # 保留 .run 文件供 firstboot 使用
-    cp '/tmp/${NVIDIA_BASENAME}' /opt/nvidia-installer.run
-    chmod +x /opt/nvidia-installer.run
-
-    # 注册首次启动编译服务
-    cat > /etc/systemd/system/nvidia-driver-firstboot.service << 'SVCEOF'
-[Unit]
-Description=NVIDIA Kernel Module First-Boot Compilation
-After=local-fs.target
-ConditionPathExists=!/var/lib/.nvidia-compiled
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-TimeoutStartSec=1800
-ExecStart=/bin/bash -c '/opt/nvidia-installer.run --silent --kernel-module-only --no-nouveau-check 2>&1 | tee /var/log/nvidia-firstboot.log && depmod -a && touch /var/lib/.nvidia-compiled || echo \"编译失败，见 /var/log/nvidia-firstboot.log\"'
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-    systemctl enable nvidia-driver-firstboot.service
-
-    rm -f '/tmp/${NVIDIA_BASENAME}'
-  " 2>&1 | tee -a "${LOG}"
-  ok "NVIDIA userspace 已安装，内核模块将在首次启动后自动编译"
-fi
-
-# ──── 第 8 步：清理缓存 ────
+# ──── 第 7 步：清理缓存 ────
 step "清理缓存"
 chroot "${SQUASHFS_ROOT}" bash -c "
   apt-get clean
   rm -rf /var/lib/apt/lists/*
   rm -rf /tmp/* /var/tmp/*
+  rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+  truncate -s 0 /etc/machine-id 2>/dev/null || true
+  rm -f /var/lib/dbus/machine-id
 "
 ok "缓存已清理"
 
-# ──── 第 9 步：卸载 chroot + 重新打包 ────
+# ──── 第 8 步：卸载 chroot + 重新打包 ────
 step "重新打包 squashfs"
 cleanup_chroot
 trap - EXIT  # 清除 trap，因为已手动调用

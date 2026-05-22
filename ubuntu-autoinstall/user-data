@@ -25,7 +25,7 @@ autoinstall:
         type: disk
         id: disk-sda
 
-      # EFI 鍒嗗尯锛�512M锛夛紝鐢ㄤ簬 UEFI
+      # EFI 分区（512M），用于 UEFI
       - device: disk-sda
         size: 536870912    # 512M
         flag: esp
@@ -41,7 +41,7 @@ autoinstall:
         type: format
         id: format-efi
 
-      # /boot 鍒嗗尯锛�4G锛夛紝鐢ㄤ簬鍐呮牳
+      # /boot 分区（4G），用于内核
       - device: disk-sda
         size: 4294967296   # 4G
         flag: ''
@@ -57,7 +57,7 @@ autoinstall:
         type: format
         id: format-boot
 
-      # 鏍瑰垎鍖猴紙鍓╀綑绌洪棿锛宔xt4锛�
+      # 根分区（剩余空间，ext4）
       - device: disk-sda
         size: -1
         flag: ''
@@ -73,7 +73,7 @@ autoinstall:
         type: format
         id: format-root
 
-      # 鎸傝浇鐐�
+      # 挂载点
       - path: /boot/efi
         device: format-efi
         type: mount
@@ -111,4 +111,5 @@ autoinstall:
     - mkdir -p /target/opt
     - cp -a /cdrom/extras /target/opt/
     - bash -c "chmod +x /target/opt/extras/scripts/*.sh || true"
+    - bash -c "chmod +r /target/opt/extras/lib/*.sh || true"
     - curtin in-target --target=/target -- bash /opt/extras/scripts/post-install.sh

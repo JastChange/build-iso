@@ -69,10 +69,11 @@ else
   ok "GPG 密钥已存在"
 fi
 
-# 导出公钥
+# 导出公钥。APT 的 signed-by 使用二进制 keyring，另保留 ASCII 版本便于人工检查。
 mkdir -p "${KEYS_DIR}"
-gpg --export --armor "repo@local" > "${KEYS_DIR}/repo-signing.gpg"
-ok "公钥已导出到 ${KEYS_DIR}/repo-signing.gpg"
+gpg --export "repo@local" > "${KEYS_DIR}/repo-signing.gpg"
+gpg --export --armor "repo@local" > "${KEYS_DIR}/repo-signing.asc"
+ok "公钥已导出到 ${KEYS_DIR}/repo-signing.gpg 和 repo-signing.asc"
 
 # ──── 第 3 步：下载离线包（可选，需联网） ────
 echo -e "\n\033[1m\033[0;34m──── 离线包管理 ────\033[0m"

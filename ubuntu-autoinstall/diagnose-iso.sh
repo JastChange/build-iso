@@ -186,12 +186,15 @@ else
   warn "install-sources.yaml 不存在（Subiquity 可能用默认加载逻辑）"
 fi
 
-# 检查 .gpg 签名文件
+# 检查 .gpg 签名文件。当前构建只替换 server 层，该层签名必须删除；
+# 其他未修改层保留官方签名是正常现象。
+CUSTOM_SERVER_GPG="${MNT}/casper/ubuntu-server-minimal.ubuntu-server.squashfs.gpg"
 GPG_FILES=$(ls "${MNT}/casper/"*.squashfs.gpg 2>/dev/null | wc -l)
 SQFS_FILES=$(ls "${MNT}/casper/"*.squashfs 2>/dev/null | wc -l)
-if [[ ${GPG_FILES} -gt 0 ]]; then
-  warn "存在 ${GPG_FILES} 个 .squashfs.gpg 签名文件（定制后签名已失效，可能阻止安装）"
-  ls "${MNT}/casper/"*.squashfs.gpg 2>/dev/null | sed 's/^/    /'
+if [[ -f "${CUSTOM_SERVER_GPG}" ]]; then
+  fail "定制 server 层仍保留失效签名：$(basename "${CUSTOM_SERVER_GPG}")"
+elif [[ ${GPG_FILES} -gt 0 ]]; then
+  ok "定制 server 层无残留签名，保留 ${GPG_FILES} 个未修改层官方签名"
 elif [[ ${SQFS_FILES} -gt 0 ]]; then
   ok "无残留 .squashfs.gpg 签名文件"
 fi
