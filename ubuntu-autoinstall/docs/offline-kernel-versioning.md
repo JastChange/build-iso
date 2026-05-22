@@ -1,6 +1,6 @@
 # 固定内核版本与离线安装
 
-固定内核由 `extras/config/kernel.env` 和 `extras/scripts/post-install.sh` 实现。该逻辑在目标系统 chroot 内运行，能正确写入目标系统 dpkg 数据库、生成 initramfs 并更新 grub。
+固定内核由 `extras/config/kernel.env` 和 `extras/scripts/post-install.sh` 实现。该逻辑在目标系统 chroot 内运行，能正确写入目标系统 dpkg 数据库、生成 initramfs、更新 grub，并把 GRUB 默认启动项固定到目标内核。
 
 ## 配置文件
 
@@ -135,10 +135,13 @@ curtin in-target --target=/target -- bash /opt/extras/scripts/post-install.sh
 2. 按 `INSTALL_MODE` 配置本地 repo 或 deb。
 3. 安装目标内核包。
 4. 根据 `KERNEL_HOLD` 锁定已安装的内核包。
-5. 执行 `update-grub`。
-6. 注册 `iso-firstboot.service`，让驱动在首次真实启动后安装。
+5. 写入 `/etc/default/grub` 的 `GRUB_DEFAULT`，指向 `Advanced options for Ubuntu>Ubuntu, with Linux <目标内核 ABI>`。
+6. 执行 `update-grub`。
+7. 注册 `iso-firstboot.service`，让驱动在首次真实启动后安装。
 
 驱动不在这个阶段安装，避免编译到安装器内核。
+
+目标系统第一次启动后，`firstboot.sh` 会在驱动安装前检查 `uname -r`。如果当前运行内核不是 `kernel.env` 指定的目标内核，会写入 `/var/lib/ubuntu-autoinstall/kernel-mismatch.log` 并停止，不安装 NVIDIA 或 Mellanox 驱动。
 
 ## 验证
 
@@ -158,6 +161,8 @@ ls -lah /var/log/ubuntu-autoinstall-debug/
 - `kernel.env` 是否已写入非空 `KERNEL_VERSION`。
 - `extras/repo/Packages` 或 `extras/debs/*.deb` 是否在 ISO 中。
 - `/var/log/post-install.log` 中是否出现内核安装错误。
+- `/etc/default/grub` 中 `GRUB_DEFAULT` 是否指向目标内核。
+- `/var/lib/ubuntu-autoinstall/kernel-mismatch.log` 是否记录了 firstboot 阻止驱动安装。
 
 如果内核正确但驱动失败，优先查看：
 

@@ -1,6 +1,6 @@
 # Ubuntu 自动安装 ISO 构建项目
 
-本项目用于基于 Ubuntu Server Live ISO 构建无人值守安装镜像。镜像启动后通过 Subiquity autoinstall 自动分区、创建用户、写入 SSH 密钥、安装指定工具，并可在安装阶段固定内核版本；需要依赖真实运行内核的驱动会在目标系统首次开机后安装，安装完成后清理残留文件并按配置重启服务器。
+本项目用于基于 Ubuntu Server Live ISO 构建无人值守安装镜像。镜像启动后通过 Subiquity autoinstall 自动分区、创建用户、写入 SSH 密钥、安装指定工具，并可在安装阶段固定内核版本；需要依赖真实运行内核的驱动会在目标系统首次开机后安装。最终验收脚本通过后才会清理残留文件并按配置重启服务器。
 
 ## 当前能力
 
@@ -12,7 +12,7 @@
 | 指定版本内核安装和锁定 | 已实现 | `extras/config/kernel.env`、`post-install.sh` |
 | 本地离线 APT 仓库 | 已实现 | `build-repo.sh`、`extras/repo/` |
 | Mellanox OFED / NVIDIA 驱动首次开机离线安装 | 已实现 | `firstboot.sh`、`install-mlnx.sh`、`install-nvidia.sh` |
-| 首次开机后清理残留并重启 | 已实现 | `extras/config/firstboot.env`、`firstboot.sh` |
+| 最终验收通过后清理残留并重启 | 已实现 | `verify-install.sh`、`firstboot.sh` |
 | 使用文档、设计文档、审查文档 | 已补全 | `docs/` |
 
 ## 快速开始
@@ -83,11 +83,11 @@ sudo bash ubuntu-autoinstall/build.sh
 1. ISO 启动后通过 GRUB 参数加载 `/cdrom/autoinstall/user-data`。
 2. Subiquity 按 `user-data` 自动分区、创建用户并安装系统。
 3. `late-commands` 复制 `/cdrom/extras` 到目标机 `/opt/extras`。
-4. `post-install.sh` 在目标系统 chroot 内安装指定内核、执行 `apt-mark hold`，并注册 `iso-firstboot.service`。
-5. 目标系统第一次真实启动后，`firstboot.sh` 在当前运行内核下安装 Mellanox / NVIDIA 驱动。
-6. 首次开机任务完成后清理 `/opt/extras`、禁用服务，并根据 `firstboot.env` 自动重启。
+4. `post-install.sh` 在目标系统 chroot 内安装指定内核、执行 `apt-mark hold`，写入 GRUB 默认内核，并注册 `iso-firstboot.service`。
+5. 目标系统第一次真实启动后，`firstboot.sh` 先确认 `uname -r` 等于目标内核，再安装 Mellanox / NVIDIA 驱动。
+6. `verify-install.sh` 执行最终验收；验收通过后才清理 `/opt/extras`、禁用服务，并根据 `firstboot.env` 自动重启。
 
-如果驱动安装失败，默认保留 `/opt/extras` 和 `iso-firstboot.service`，不自动重启，并把系统快照、shell trace、厂商安装器日志归档到 `/var/log/ubuntu-autoinstall-debug/`。
+如果内核不匹配、驱动安装失败或最终验收失败，默认保留 `/opt/extras` 和 `iso-firstboot.service`，不自动重启，便于现场排查后重跑。
 
 驱动安装默认强制离线：`firstboot.env` 中 `DRIVER_OFFLINE_MODE=true` 时，目标机首次开机阶段不会执行 `apt-get update/install`。驱动依赖需要在构建 ISO 时通过 `extras/config/packages.list` 或 `extras/repo` 预装进系统。
 

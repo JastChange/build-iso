@@ -29,6 +29,7 @@ enable_debug_trace() {
     return 0
   fi
 
+  mkdir -p "${DEBUG_DIR}"
   exec {MLNX_TRACE_FD}>>"${DEBUG_DIR}/mlnx-ofed.trace"
   export BASH_XTRACEFD="${MLNX_TRACE_FD}"
   PS4='+ [${BASH_SOURCE##*/}:${LINENO}] '
@@ -91,6 +92,11 @@ collect_mlnx_snapshot() {
   local snapshot="${DEBUG_DIR}/mlnx-ofed-system.txt"
   local kernel current_distro target_distro
 
+  if ! bool_true "${FIRSTBOOT_DEBUG}"; then
+    return 0
+  fi
+
+  mkdir -p "${DEBUG_DIR}"
   kernel="$(uname -r)"
   # shellcheck disable=SC1091
   source /etc/os-release 2>/dev/null || true
@@ -193,6 +199,10 @@ collect_mlnx_failure_summary() {
 collect_mlnx_artifacts() {
   local artifact_dir="${DEBUG_DIR}/mlnx-ofed-artifacts"
 
+  if ! bool_true "${FIRSTBOOT_DEBUG}"; then
+    return 0
+  fi
+
   mkdir -p "${artifact_dir}"
   cp -a "${LOG}" "${artifact_dir}/" 2>/dev/null || true
   if [[ -n "${TMPDIR}" && -d "${TMPDIR}" ]]; then
@@ -222,7 +232,9 @@ on_error() {
 }
 
 cleanup() {
-  collect_mlnx_artifacts
+  if bool_true "${FIRSTBOOT_DEBUG}"; then
+    collect_mlnx_artifacts
+  fi
   if [[ -n "${MOUNT_DIR}" ]]; then
     umount "${MOUNT_DIR}" 2>/dev/null || true
   fi
@@ -286,7 +298,6 @@ ensure_packages() {
   run_logged apt-get install -y --no-install-recommends "${missing[@]}"
 }
 
-mkdir -p "${DEBUG_DIR}"
 enable_debug_trace
 trap 'on_error "${LINENO}" "${BASH_COMMAND}" "$?"' ERR
 trap 'status=$?; cleanup; trap - EXIT; exit "${status}"' EXIT

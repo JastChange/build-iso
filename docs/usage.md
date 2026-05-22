@@ -110,6 +110,8 @@ bash ubuntu-autoinstall/build-repo.sh
 sudo bash ubuntu-autoinstall/build.sh
 ```
 
+内核安装发生在 autoinstall 的 `late-commands` 阶段。`post-install.sh` 会在目标系统 chroot 内安装目标内核，并把 `GRUB_DEFAULT` 固定到该内核，因此安装完成后的第一次正常重启就应进入指定内核。firstboot 会在安装 NVIDIA/Mellanox 前再次检查 `uname -r`；如果不是目标内核，会停止驱动安装并写入 `/var/lib/ubuntu-autoinstall/kernel-mismatch.log`。
+
 ## 5. 配置首次开机任务
 
 首次开机配置文件：
@@ -124,15 +126,19 @@ ubuntu-autoinstall/extras/config/firstboot.env
 |------|--------|------|
 | `FIRSTBOOT_REBOOT` | `true` | 首次开机任务完成后是否自动重启 |
 | `CLEANUP_EXTRAS` | `true` | 是否删除 `/opt/extras` |
-| `DRIVER_FAILURE_POLICY` | `continue` | 驱动失败后继续还是终止，支持 `continue`/`fail` |
-| `FIRSTBOOT_DEBUG` | `true` | 是否写入 firstboot 和驱动安装 trace |
+| `DRIVER_FAILURE_POLICY` | `continue` | 驱动失败后是否继续尝试后续驱动；无论取值如何，最终验收失败都不会清理/重启 |
+| `FIRSTBOOT_DEBUG` | `false` | 是否写入 firstboot 和驱动安装 trace |
 | `DRIVER_OFFLINE_MODE` | `true` | 驱动首次开机安装是否强制离线；为 `true` 时不会执行 `apt-get update/install` |
 | `DEBUG_DIR` | `/var/log/ubuntu-autoinstall-debug` | 调试日志目录 |
 | `MLNX_INSTALL_PROFILE` | `basic` | Mellanox OFED 安装范围，支持 `basic`/`hpc`/`all`/`dpdk`/`ovs-dpdk`/`vma`/`xlio`/`guest`/`hypervisor`/`bluefield`/`none` |
-| `RETAIN_ON_DRIVER_FAILURE` | `true` | 驱动失败时保留 `/opt/extras` 和驱动包 |
-| `REBOOT_ON_DRIVER_FAILURE` | `false` | 驱动失败时是否仍自动重启 |
-| `MARK_DONE_ON_DRIVER_FAILURE` | `false` | 驱动失败时是否仍写入 `firstboot.done` |
-| `KEEP_SERVICE_ON_DRIVER_FAILURE` | `true` | 驱动失败时是否保留 `iso-firstboot.service` |
+| `FINAL_VERIFY_ENABLED` | `true` | 是否执行最终安装验收脚本 |
+| `FINAL_VERIFY_SCRIPT` | `/opt/extras/scripts/verify-install.sh` | 最终安装验收脚本路径 |
+| `RETAIN_ON_DRIVER_FAILURE` | `true` | 兼容旧配置；当前由最终验收统一控制，验收未通过始终保留 `/opt/extras` |
+| `REBOOT_ON_DRIVER_FAILURE` | `false` | 兼容旧配置；当前由最终验收统一控制，验收未通过不会自动重启 |
+| `MARK_DONE_ON_DRIVER_FAILURE` | `false` | 兼容旧配置；当前由最终验收统一控制，验收未通过不会写入 `firstboot.done` |
+| `KEEP_SERVICE_ON_DRIVER_FAILURE` | `true` | 兼容旧配置；当前由最终验收统一控制，验收未通过始终保留 `iso-firstboot.service` |
+
+最终验收脚本通过后，firstboot 才会清理安装残留并按 `FIRSTBOOT_REBOOT` 重启。验收失败时会保留 `/opt/extras`、`iso-firstboot.service` 和日志，便于排查后手动重跑。
 
 ## 6. 放入驱动
 
@@ -193,6 +199,7 @@ dpkg -l | grep '^ii  linux-'
 apt-mark showhold | grep '^linux-' || true
 cat /var/log/post-install.log
 cat /var/log/ubuntu-autoinstall-firstboot.log
+cat /var/log/ubuntu-autoinstall-verify.log
 ls -lah /var/log/ubuntu-autoinstall-debug/
 ```
 
@@ -200,7 +207,10 @@ ls -lah /var/log/ubuntu-autoinstall-debug/
 
 ```bash
 nvidia-smi
-ibv_devinfo
+ofed_info -s
+systemctl status opensmd --no-pager
+dkms status
+ipmitool -V
 ```
 
 如果 `CLEANUP_EXTRAS=true`，首次开机完成后 `/opt/extras` 会被删除；日志保留在 `/var/log/`。
@@ -211,9 +221,12 @@ ibv_devinfo
 
 ```bash
 cat /var/log/ubuntu-autoinstall-firstboot.log
+cat /var/log/ubuntu-autoinstall-verify.log
 cat /var/log/mlnx-ofed-install.log
 cat /var/log/nvidia-install.log
 cat /var/lib/ubuntu-autoinstall/driver-failures.log
+cat /var/lib/ubuntu-autoinstall/kernel-mismatch.log
+cat /var/lib/ubuntu-autoinstall/verification-failure.log
 ls -lah /var/log/ubuntu-autoinstall-debug/
 ```
 

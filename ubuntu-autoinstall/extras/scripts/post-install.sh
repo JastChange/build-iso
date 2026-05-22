@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 由 autoinstall late-commands 通过 curtin in-target 调用。
-# 这里运行在目标系统 chroot 内，负责安装固定内核并注册首次开机任务。
+# 这里运行在目标系统 chroot 内，负责安装固定内核、设置 GRUB 默认内核并注册首次开机任务。
 set -euo pipefail
 
 EXTRAS_DIR="${EXTRAS_DIR:-/opt/extras}"
@@ -237,6 +237,29 @@ hold_installed_kernel_packages() {
   done
 }
 
+set_grub_default_kernel() {
+  local kernel_abi="$1"
+  local grub_default='Advanced options for Ubuntu>Ubuntu, with Linux '"${kernel_abi}"
+
+  if [[ ! -e "/boot/vmlinuz-${kernel_abi}" ]]; then
+    log "错误：未找到 /boot/vmlinuz-${kernel_abi}，不能设置 GRUB 默认内核"
+    return 1
+  fi
+
+  if grep -q '^GRUB_DEFAULT=' /etc/default/grub 2>/dev/null; then
+    sed -i 's|^GRUB_DEFAULT=.*|GRUB_DEFAULT="'"${grub_default}"'"|' /etc/default/grub
+  else
+    printf 'GRUB_DEFAULT="%s"\n' "${grub_default}" >> /etc/default/grub
+  fi
+
+  if command -v grub-set-default >/dev/null 2>&1; then
+    grub-set-default "${grub_default}" >/dev/null 2>&1 || true
+  fi
+
+  update-grub
+  log "已设置 GRUB 默认启动内核：${grub_default}"
+}
+
 install_target_kernel() {
   local kernel_abi=""
 
@@ -271,8 +294,8 @@ install_target_kernel() {
   esac
 
   hold_installed_kernel_packages "${kernel_abi}"
-  update-grub
-  log "固定内核安装完成：${kernel_abi}"
+  set_grub_default_kernel "${kernel_abi}"
+  log "固定内核安装和 GRUB 配置完成：${kernel_abi}"
 }
 
 load_kernel_config() {

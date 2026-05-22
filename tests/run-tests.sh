@@ -31,6 +31,29 @@ assert_file_contains() {
   fi
 }
 
+assert_file_not_contains() {
+  local file="$1"
+  local pattern="$2"
+  local message="$3"
+  if grep -Fq -- "${pattern}" "${file}"; then
+    printf 'FAIL: %s\n  unexpected pattern: %s\n  file: %s\n' "${message}" "${pattern}" "${file}" >&2
+    failures=$((failures + 1))
+  else
+    printf 'PASS: %s\n' "${message}"
+  fi
+}
+
+assert_file_exists() {
+  local file="$1"
+  local message="$2"
+  if [[ ! -f "${file}" ]]; then
+    printf 'FAIL: %s\n  missing file: %s\n' "${message}" "${file}" >&2
+    failures=$((failures + 1))
+  else
+    printf 'PASS: %s\n' "${message}"
+  fi
+}
+
 assert_symlink() {
   local path="$1"
   local message="$2"
@@ -92,11 +115,51 @@ test_nvidia_installer_args() {
     "nvidia installer runs silently"
 }
 
+test_post_install_sets_grub_target_kernel() {
+  local script="${ROOT_DIR}/ubuntu-autoinstall/extras/scripts/post-install.sh"
+  assert_file_contains "${script}" "set_grub_default_kernel" \
+    "post-install has explicit GRUB target kernel selection"
+  assert_file_contains "${script}" "GRUB_DEFAULT=" \
+    "post-install writes GRUB_DEFAULT for the target kernel"
+  assert_file_contains "${script}" "install_target_kernel" \
+    "post-install installs the configured target kernel before first boot"
+}
+
+test_firstboot_gates_drivers_on_target_kernel() {
+  local script="${ROOT_DIR}/ubuntu-autoinstall/extras/scripts/firstboot.sh"
+  assert_file_contains "${script}" "validate_target_kernel_for_drivers" \
+    "firstboot validates the running kernel before installing drivers"
+  assert_file_contains "${script}" "kernel-mismatch.log" \
+    "firstboot records kernel mismatch details"
+  assert_file_not_contains "${script}" "先安装并切换内核" \
+    "firstboot does not install and reboot into the target kernel"
+}
+
+test_final_verification_controls_cleanup_and_reboot() {
+  local firstboot="${ROOT_DIR}/ubuntu-autoinstall/extras/scripts/firstboot.sh"
+  local verify="${ROOT_DIR}/ubuntu-autoinstall/extras/scripts/verify-install.sh"
+  assert_file_exists "${verify}" \
+    "final verification script is shipped in extras"
+  assert_file_contains "${firstboot}" "run_final_verification" \
+    "firstboot runs final verification before cleanup"
+  assert_file_contains "${firstboot}" "最终验收失败" \
+    "firstboot keeps residue when final verification fails"
+  assert_file_contains "${verify}" "nvidia-smi" \
+    "final verification checks NVIDIA runtime"
+  assert_file_contains "${verify}" "ofed_info -s" \
+    "final verification checks Mellanox OFED runtime"
+  assert_file_contains "${verify}" "ipmitool" \
+    "final verification checks ipmitool installation"
+}
+
 test_kernel_abi_normalization
 test_kernel_package_lists
 test_firstboot_service_registration
 test_mlnx_installer_args
 test_nvidia_installer_args
+test_post_install_sets_grub_target_kernel
+test_firstboot_gates_drivers_on_target_kernel
+test_final_verification_controls_cleanup_and_reboot
 
 if [[ "${failures}" -gt 0 ]]; then
   exit 1

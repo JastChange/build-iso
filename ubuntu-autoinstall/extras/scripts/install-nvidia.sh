@@ -26,6 +26,7 @@ enable_debug_trace() {
     return 0
   fi
 
+  mkdir -p "${DEBUG_DIR}"
   exec {NVIDIA_TRACE_FD}>>"${DEBUG_DIR}/nvidia.trace"
   export BASH_XTRACEFD="${NVIDIA_TRACE_FD}"
   PS4='+ [${BASH_SOURCE##*/}:${LINENO}] '
@@ -48,6 +49,11 @@ collect_nvidia_snapshot() {
   local snapshot="${DEBUG_DIR}/nvidia-system.txt"
   local kernel
 
+  if ! bool_true "${FIRSTBOOT_DEBUG}"; then
+    return 0
+  fi
+
+  mkdir -p "${DEBUG_DIR}"
   kernel="$(uname -r)"
   {
     echo "===== NVIDIA snapshot $(date '+%F %T') ====="
@@ -99,6 +105,10 @@ collect_nvidia_snapshot() {
 collect_nvidia_artifacts() {
   local artifact_dir="${DEBUG_DIR}/nvidia-artifacts"
 
+  if ! bool_true "${FIRSTBOOT_DEBUG}"; then
+    return 0
+  fi
+
   mkdir -p "${artifact_dir}"
   cp -a /var/log/nvidia-installer.log* "${artifact_dir}/" 2>/dev/null || true
   cp -a "${LOG}" "${artifact_dir}/" 2>/dev/null || true
@@ -149,7 +159,7 @@ if [[ -f "${DONE_FILE}" ]]; then
   exit 0
 fi
 
-mkdir -p "${STATE_DIR}" "${DEBUG_DIR}"
+mkdir -p "${STATE_DIR}"
 enable_debug_trace
 trap 'on_error "${LINENO}" "${BASH_COMMAND}" "$?"' ERR
 chmod +x "${NVIDIA_RUN}"

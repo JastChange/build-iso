@@ -8,7 +8,7 @@
 - 分区、用户、密码、SSH 密钥等安装参数由 `user-data` 控制。
 - 可安装指定 ABI 版本的 Ubuntu 内核，并可锁定内核包。
 - Mellanox OFED、NVIDIA 等依赖真实运行内核的驱动在目标系统首次开机后安装。
-- 首次开机任务完成后清理构建/安装残留，并按配置重启服务器。
+- 首次开机任务完成后先执行最终验收脚本；只有验收通过才清理构建/安装残留，并按配置重启服务器。
 
 ## 总体架构
 
@@ -50,6 +50,7 @@ late-commands
           |
           +-- 读取 kernel.env
           +-- 安装/锁定指定内核
+          +-- 写入 GRUB_DEFAULT，强制首次启动进入指定内核
           +-- 注册 iso-firstboot.service
   |
   v
@@ -61,10 +62,12 @@ iso-firstboot.service
   +-- firstboot.sh
           |
           +-- 读取 firstboot.env
+          +-- 校验当前运行内核是否等于 kernel.env 目标内核
           +-- 安装 Mellanox OFED
           +-- 安装 NVIDIA 驱动
-          +-- 清理 /opt/extras 和 systemd 服务
-          +-- 按配置重启
+          +-- 执行 verify-install.sh 最终验收
+          +-- 验收通过后清理 /opt/extras 和 systemd 服务
+          +-- 验收通过后按配置重启
 ```
 
 ## 目录职责
@@ -87,13 +90,23 @@ iso-firstboot.service
 
 ## 关键设计决策
 
-### 1. 内核安装放在 post-install 阶段
+### 1. 内核安装和 GRUB 固定放在 post-install 阶段
 
 内核安装需要在目标系统上下文中生成 initramfs、更新 grub，并写入目标系统的 dpkg 数据库。因此它由 `post-install.sh` 在 `curtin in-target` 环境中完成，而不是在构建机或安装器环境中完成。
+
+安装完成后，`post-install.sh` 会把 `/etc/default/grub` 的 `GRUB_DEFAULT` 写成：
+
+```text
+Advanced options for Ubuntu>Ubuntu, with Linux <目标内核 ABI>
+```
+
+这样安装器完成后的第一次正常重启就应直接进入指定内核，不需要 firstboot 为切换内核额外重启一次。
 
 ### 2. 驱动安装放在 firstboot 阶段
 
 Mellanox OFED 和 NVIDIA 驱动通常会编译当前运行内核的模块。安装器 chroot 阶段的 `uname -r` 可能仍是安装器内核，不一定是目标系统最终内核。因此驱动统一推迟到目标系统第一次启动后执行。
+
+firstboot 在安装驱动前会再次比较 `uname -r` 和 `kernel.env` 中的目标内核。如果不一致，会写入 `/var/lib/ubuntu-autoinstall/kernel-mismatch.log`，并立即停止，不安装 NVIDIA 或 Mellanox 驱动。
 
 ### 3. 配置与实现分离
 
@@ -119,7 +132,24 @@ ConditionPathExists=!/var/lib/ubuntu-autoinstall/firstboot.done
 
 `firstboot.sh` 成功后写入 done 文件、禁用并删除服务文件，避免重复安装驱动。
 
-### 6. 清理策略默认开启
+### 6. 最终验收控制清理和重启
+
+`firstboot.sh` 在驱动安装完成后调用：
+
+```bash
+/opt/extras/scripts/verify-install.sh
+```
+
+验收脚本检查目标内核、预装工具、`ipmitool`、Mellanox OFED、OpenSM、NVIDIA、DKMS 和驱动失败摘要。只有脚本返回 0，firstboot 才会：
+
+1. 写入 `/var/lib/ubuntu-autoinstall/firstboot.done`。
+2. 删除或保留 `/opt/extras`，取决于 `CLEANUP_EXTRAS`。
+3. 禁用并删除 `iso-firstboot.service`。
+4. 按 `FIRSTBOOT_REBOOT` 决定是否重启。
+
+如果验收失败，firstboot 不会清理 `/opt/extras`，不会删除 systemd 服务，也不会自动重启，便于现场排查后手动重跑。
+
+### 7. 清理策略默认开启
 
 默认 `CLEANUP_EXTRAS=true`，首次开机完成后删除 `/opt/extras`，避免驱动包、离线仓库、密钥等残留在目标机。日志保留在：
 
@@ -127,13 +157,14 @@ ConditionPathExists=!/var/lib/ubuntu-autoinstall/firstboot.done
 - `/var/log/ubuntu-autoinstall-firstboot.log`
 - `/var/log/mlnx-ofed-install.log`
 - `/var/log/nvidia-install.log`
+- `/var/log/ubuntu-autoinstall-verify.log`
 - `/var/log/ubuntu-autoinstall-debug/`
 
 构建阶段还会从 squashfs 中清理 SSH host keys 和 machine-id，避免多台通过同一 ISO 安装的机器共享主机密钥或机器标识。
 
-### 7. 驱动失败调试设计
+### 8. 驱动失败调试设计
 
-驱动安装横跨 ISO 构建、目标系统 autoinstall、首次真实启动和厂商安装器四层。为了定位失败边界，firstboot 阶段默认启用调试采集：
+驱动安装横跨 ISO 构建、目标系统 autoinstall、首次真实启动和厂商安装器四层。为了定位失败边界，firstboot 阶段可通过 `FIRSTBOOT_DEBUG=true` 启用调试采集：
 
 - `firstboot.sh` 写入系统快照、驱动包列表、内核 headers、DKMS、PCI 设备、Secure Boot、网络和磁盘空间信息。
 - `install-mlnx.sh` 写入 OFED 包目标发行版和当前系统发行版；如果包名是 `ubuntu24.04` 但目标系统是 `ubuntu22.04`，日志会明确写出警告。
@@ -144,7 +175,7 @@ ConditionPathExists=!/var/lib/ubuntu-autoinstall/firstboot.done
 - 三个脚本都会在 `FIRSTBOOT_DEBUG=true` 时写入 shell trace。
 - 厂商安装器失败时会归档安装器日志、`dmesg` 和 `dkms status`。
 
-驱动失败时默认执行调试友好的策略：
+驱动失败或最终验收失败时执行调试友好的策略：
 
 - 保留 `/opt/extras`，避免驱动包和脚本被删除。
 - 不自动重启，避免现场状态被重置。
@@ -159,7 +190,9 @@ ConditionPathExists=!/var/lib/ubuntu-autoinstall/firstboot.done
 | 源 ISO 缺失 | 直接失败 |
 | user-data YAML 错误 | 直接失败 |
 | 指定内核安装失败 | 直接失败，避免安装出错误内核 |
-| 驱动安装失败 | 默认记录失败、保留现场、不自动重启；可用 `DRIVER_FAILURE_POLICY=fail` 改成失败即停 |
+| 当前内核不是目标内核 | firstboot 直接失败，阻止 NVIDIA/Mellanox 安装 |
+| 驱动安装失败 | 记录失败、保留现场、不自动重启；可用 `DRIVER_FAILURE_POLICY=fail` 改成失败即停 |
+| 最终验收失败 | 保留 `/opt/extras` 和 systemd 服务，不写入 done，不自动重启 |
 
 ## 测试策略
 
@@ -168,5 +201,8 @@ ConditionPathExists=!/var/lib/ubuntu-autoinstall/firstboot.done
 - 内核 ABI 归一化。
 - 内核包名计算。
 - firstboot systemd 服务生成。
+- post-install 写入目标内核 GRUB 默认项。
+- firstboot 在驱动前校验目标内核。
+- firstboot 由最终验收脚本控制清理和重启。
 
 脚本语法通过 `bash -n` 检查。完整 ISO 构建和 QEMU 安装验证需要 Ubuntu 构建机、root 权限和源 ISO。
